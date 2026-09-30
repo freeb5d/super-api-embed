@@ -138,7 +138,8 @@ export class Embed {
   // with loading the embed.
   responsiveTimer: ReturnType<typeof setTimeout> | null;
 
-  // Track if the embed has successfully loaded. Set to true when the
+  // Track if the embed has successfully loaded. Set to true when the embed
+  // sends its `LOADED` message.
   embedSuccessfullyInitialized: boolean;
 
   constructor(options: Options) {
@@ -163,7 +164,6 @@ export class Embed {
 
     // Setup the iframe
     this.iframe = window.document.createElement("iframe");
-    this.iframe.setAttribute("data-testid", "iframe");
     this.iframe.src = this.options.url;
     this.iframe.width = "100%";
     this.iframe.height = "0";
@@ -173,18 +173,19 @@ export class Embed {
     this.iframe.allow = "fullscreen";
 
     this.iframe.addEventListener("load", () => {
+      this.clearResponsiveTimer();
       this.responsiveTimer = setTimeout(() => {
-        if (
-          this.embedSuccessfullyInitialized === false &&
-          this.options.onLoadError !== undefined
-        ) {
-          log.warn(
-            "Detected embed load failure, `onLoadError` callback will be fired if available",
-          );
-          this.options.onLoadError();
-        } else {
+        this.responsiveTimer = null;
+
+        if (this.embedSuccessfullyInitialized) {
           log.info("Detected successful embed load");
+          return;
         }
+
+        log.warn(
+          "Detected embed load failure, `onLoadError` callback will be fired if available",
+        );
+        this.options.onLoadError?.();
       }, 3000);
     });
 
@@ -216,8 +217,18 @@ export class Embed {
   public teardown() {
     log.info(`Removing embed wrapper for: ${this.options.url}`);
     window.removeEventListener("message", this.handleMessageBound);
-    this.options.element.innerHTML = "";
+    this.clearResponsiveTimer();
+    this.iframe.remove();
+    this.loader?.remove();
+    this.loader = null;
     this.bus.removeAllListeners();
+  }
+
+  private clearResponsiveTimer() {
+    if (this.responsiveTimer !== null) {
+      clearTimeout(this.responsiveTimer);
+      this.responsiveTimer = null;
+    }
   }
 
   public on<K extends MESSAGE_KIND>(
@@ -249,6 +260,17 @@ export class Embed {
       return;
     }
 
+    // Ignore messages that came from a different window, e.g. another embed
+    // on the same page.
+    if (event.source !== this.iframe.contentWindow) {
+      return;
+    }
+
+    if (typeof event.data !== "object" || event.data === null) {
+      log.warn("Ignoring malformed message, data was not an object");
+      return;
+    }
+
     log.info(
       `Heard incoming message: ${event.data.kind}, with data: ${JSON.stringify(event.data.data)}`,
     );
@@ -266,6 +288,7 @@ export class Embed {
         }
 
         this.embedSuccessfullyInitialized = true;
+        this.clearResponsiveTimer();
 
         break;
       }
