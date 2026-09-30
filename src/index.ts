@@ -288,7 +288,6 @@ export class Embed {
         }
 
         this.embedSuccessfullyInitialized = true;
-        this.clearResponsiveTimer();
 
         break;
       }
